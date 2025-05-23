@@ -1,9 +1,9 @@
 {
-  "name": "zagreb-gtfs-client",
+  "name": "zet",
   "version": "1.0.0",
-  "description": "Client for parsing Zagreb public transport GTFS real-time data",
-  "main": "server.js",
   "type": "module",
+  "description": "Real-time public transport tracking for Zagreb",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
@@ -14,6 +14,9 @@
     "protobufjs": "^7.2.6"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

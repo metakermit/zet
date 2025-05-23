@@ -7,10 +7,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
 
 // Initialize GTFS client
-const gtfsClient = new ZagrebGTFSClient();
+const client = new ZagrebGTFSClient();
+await client.initialize();
 
 // Serve static files from the public directory
 app.use(express.static(join(__dirname, 'public')));
@@ -18,12 +19,7 @@ app.use(express.static(join(__dirname, 'public')));
 // API endpoint for vehicle positions
 app.get('/api/vehicles', async (req, res) => {
     try {
-        const positions = await gtfsClient.getVehiclePositions();
-        // Log the first few vehicles to see their structure
-        console.log('Raw vehicle data (first 5 vehicles):');
-        positions.slice(0, 5).forEach(vehicle => {
-            console.log(JSON.stringify(vehicle, null, 2));
-        });
+        const positions = await client.getVehiclePositions();
         res.json(positions);
     } catch (error) {
         console.error('Error fetching vehicle positions:', error);
@@ -31,6 +27,16 @@ app.get('/api/vehicles', async (req, res) => {
     }
 });
 
-app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
-}); 
+// Handle all other routes by serving index.html
+app.get('*', (req, res) => {
+    res.sendFile(join(__dirname, 'public', 'index.html'));
+});
+
+// Only start the server if we're not in a serverless environment
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(port, () => {
+        console.log(`Server running at http://localhost:${port}`);
+    });
+}
+
+export default app; 
