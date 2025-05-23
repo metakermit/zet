@@ -1,51 +1,55 @@
-# Zagreb GTFS Client
+# Zagreb Public Transport Live Map
 
-A JavaScript client for parsing real-time public transport vehicle positions in Zagreb using the GTFS real-time feed.
+A real-time map application that displays the current positions of public transport vehicles (trams and buses) in Zagreb, Croatia. The application uses the GTFS (General Transit Feed Specification) real-time feed provided by ZET (Zagreb Electric Tram).
 
-## Installation
+## Features
 
-```bash
-npm install
-```
+- Real-time vehicle tracking with 10-second updates
+- Different icons for trams (🚃) and buses (🚌)
+- Route numbers displayed next to vehicles
+- Detailed vehicle information in popups:
+  - Vehicle type and line number
+  - Vehicle ID and license plate
+  - Current status and speed
+  - Direction and occupancy information
+  - Last update timestamp
 
-## Usage
+## Technical Stack
 
-```javascript
-import ZagrebGTFSClient from './src/index.js';
+- Node.js with Express for the backend server
+- GTFS real-time protocol buffer for data parsing
+- Leaflet.js for the interactive map
+- OpenStreetMap for map tiles
 
-const client = new ZagrebGTFSClient();
+## Setup
 
-// Get current vehicle positions
-const positions = await client.getVehiclePositions();
-console.log(positions);
-```
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-The client will return an array of vehicle positions with the following information for each vehicle:
+2. Start the development server:
+   ```bash
+   npm run dev
+   ```
 
-- `id`: Unique identifier for the vehicle update
-- `vehicleId`: The vehicle's unique identifier
-- `label`: The vehicle's label (usually the route number)
-- `licensePlate`: The vehicle's license plate number
-- `position`: Object containing:
-  - `latitude`: Current latitude
-  - `longitude`: Current longitude
-  - `bearing`: Direction of travel in degrees
-  - `speed`: Current speed
-- `currentStatus`: Current status of the vehicle
-- `timestamp`: Last update timestamp
-- `congestionLevel`: Current congestion level
-- `occupancyStatus`: Current occupancy status
+3. Open your browser and navigate to:
+   ```
+   http://localhost:3000
+   ```
 
-## Running the Example
+## Development
 
-```bash
-npm start
-```
+- The server automatically restarts when files change (using nodemon)
+- Vehicle positions are updated every 10 seconds
+- The map is centered on Zagreb with a zoom level suitable for viewing the entire city
 
-This will fetch and display the current positions of all vehicles in the system.
+## Data Source
 
-## Notes
+The application uses the GTFS real-time feed from ZET:
+- Feed URL: `https://www.zet.hr/gtfs-rt-protobuf`
+- Protocol buffer definition: `proto/gtfs-realtime.proto`
 
-- The client uses the GTFS real-time protocol buffer format
-- Data is fetched from the official ZET GTFS feed
-- The client automatically handles protocol buffer decoding and data processing 
+## License
+
+This project is open source and available under the MIT License. 
