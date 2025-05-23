@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zagreb Public Transport Live Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        #map {
+            width: 100vw;
+            height: 100vh;
+        }
+        .vehicle-popup {
+            font-family: Arial, sans-serif;
+        }
+        .vehicle-popup h3 {
+            margin: 0 0 5px 0;
+        }
+        .vehicle-popup p {
+            margin: 3px 0;
+        }
+        /* Lower the opacity of the map tiles */
+        .leaflet-tile-pane {
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script type="module" src="app.js"></script>
+</body>
+</html> 
