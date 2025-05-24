@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zagreb Public Transport Live Map</title>
+    <title>ZET Live Map</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚃</text></svg>">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <style>
         body {
@@ -27,6 +28,14 @@
         /* Lower the opacity of the map tiles */
         .leaflet-tile-pane {
             opacity: 0.7;
+        }
+        .leaflet-control-locate {
+            font-size: 20px;
+            cursor: pointer;
+            padding: 2px 6px;
+        }
+        .leaflet-control-locate.active {
+            color: #2074b6;
         }
     </style>
 </head>

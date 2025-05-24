@@ -7,8 +7,93 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors'
 }).addTo(map);
 
+// Create custom location control
+L.Control.Locate = L.Control.extend({
+    options: {
+        position: 'topleft'
+    },
+
+    onAdd: function(map) {
+        const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+        const button = L.DomUtil.create('a', 'leaflet-control-locate', container);
+        button.innerHTML = '📍';
+        button.href = '#';
+        button.title = 'Show my location';
+
+        L.DomEvent.on(button, 'click', function(e) {
+            L.DomEvent.preventDefault(e);
+            this._toggleLocation(button);
+        }, this);
+
+        this._button = button;
+        return container;
+    },
+
+    _toggleLocation: function(button) {
+        if (!navigator.geolocation) {
+            alert('Geolocation is not supported by your browser');
+            return;
+        }
+
+        if (this._isWatchingLocation) {
+            // Stop watching location
+            navigator.geolocation.clearWatch(this._locationWatchId);
+            if (this._locationMarker) {
+                this._locationMarker.remove();
+                this._locationMarker = null;
+            }
+            if (this._locationCircle) {
+                this._locationCircle.remove();
+                this._locationCircle = null;
+            }
+            this._isWatchingLocation = false;
+            L.DomUtil.removeClass(button, 'active');
+        } else {
+            // Start watching location
+            this._locationWatchId = navigator.geolocation.watchPosition(
+                (position) => {
+                    const { latitude, longitude, accuracy } = position.coords;
+                    const latlng = [latitude, longitude];
+
+                    // Create or update the marker
+                    if (!this._locationMarker) {
+                        this._locationMarker = L.marker(latlng).addTo(map);
+                        this._locationCircle = L.circle(latlng, { radius: accuracy }).addTo(map);
+                        map.setView(latlng, 16); // Zoom to location
+                    } else {
+                        this._locationMarker.setLatLng(latlng);
+                        this._locationCircle.setLatLng(latlng);
+                        this._locationCircle.setRadius(accuracy);
+                    }
+                },
+                (error) => {
+                    alert(`Error getting location: ${error.message}`);
+                    this._isWatchingLocation = false;
+                    L.DomUtil.removeClass(button, 'active');
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 5000,
+                    maximumAge: 0
+                }
+            );
+            this._isWatchingLocation = true;
+            L.DomUtil.addClass(button, 'active');
+        }
+    }
+});
+
+// Add the location control to the map
+new L.Control.Locate().addTo(map);
+
 // Store vehicle markers
 const vehicleMarkers = new Map();
+
+// Initialize location marker
+let locationMarker = null;
+let locationCircle = null;
+let isWatchingLocation = false;
+let locationWatchId = null;
 
 // Custom vehicle icons
 const vehicleIcons = {
