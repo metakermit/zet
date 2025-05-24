@@ -1,8 +1,13 @@
 import fetch from 'node-fetch';
 import protobuf from 'protobufjs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // GTFS real-time feed URL for Zagreb
-const GTFS_REALTIME_URL = 'https://www.zet.hr/gtfs-rt-protobuf';
+const GTFS_REALTIME_URL = process.env.GTFS_REALTIME_URL || 'https://www.zet.hr/gtfs-rt-protobuf';
 
 class ZagrebGTFSClient {
     constructor() {
@@ -13,11 +18,12 @@ class ZagrebGTFSClient {
     async initialize() {
         try {
             // Load the GTFS real-time protocol buffer definition from local file
-            this.protoRoot = await protobuf.load(new URL('../proto/gtfs-realtime.proto', import.meta.url).pathname);
+            const protoPath = join(__dirname, '..', 'proto', 'gtfs-realtime.proto');
+            this.protoRoot = await protobuf.load(protoPath);
             this.FeedMessage = this.protoRoot.lookupType('transit_realtime.FeedMessage');
         } catch (error) {
             console.error('Failed to initialize GTFS client:', error);
-            throw error;
+            throw new Error(`GTFS initialization failed: ${error.message}`);
         }
     }
 

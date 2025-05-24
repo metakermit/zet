@@ -11,7 +11,33 @@ const port = process.env.PORT || 3000;
 
 // Initialize GTFS client
 const client = new ZagrebGTFSClient();
-await client.initialize();
+
+// Global error handler
+app.use((err, req, res, next) => {
+    console.error('Unhandled error:', err);
+    res.status(500).json({ 
+        error: 'Internal server error',
+        message: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+});
+
+// Initialize client before handling requests
+let clientInitialized = false;
+app.use(async (req, res, next) => {
+    if (!clientInitialized) {
+        try {
+            await client.initialize();
+            clientInitialized = true;
+        } catch (error) {
+            console.error('Failed to initialize GTFS client:', error);
+            return res.status(500).json({ 
+                error: 'Service initialization failed',
+                message: process.env.NODE_ENV === 'development' ? error.message : undefined
+            });
+        }
+    }
+    next();
+});
 
 // Serve static files from the public directory
 app.use(express.static(join(__dirname, 'public')));
@@ -23,7 +49,10 @@ app.get('/api/vehicles', async (req, res) => {
         res.json(positions);
     } catch (error) {
         console.error('Error fetching vehicle positions:', error);
-        res.status(500).json({ error: 'Failed to fetch vehicle positions' });
+        res.status(500).json({ 
+            error: 'Failed to fetch vehicle positions',
+            message: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
     }
 });
 
