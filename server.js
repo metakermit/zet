@@ -14,10 +14,21 @@ const client = new ZagrebGTFSClient();
 
 // Global error handler
 app.use((err, req, res, next) => {
-    console.error('Unhandled error:', err);
+    // Detailed error logging for debugging
+    console.error('Unhandled error:', {
+        message: err.message,
+        stack: err.stack,
+        url: req.url,
+        method: req.method,
+        body: req.body,
+        query: req.query
+    });
+    
     res.status(500).json({ 
         error: 'Internal server error',
-        message: process.env.NODE_ENV === 'development' ? err.message : undefined
+        message: process.env.NODE_ENV === 'development' ? err.message : undefined,
+        // Include stack trace in development
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
 });
 
@@ -26,13 +37,18 @@ let clientInitialized = false;
 app.use(async (req, res, next) => {
     if (!clientInitialized) {
         try {
+            // Breakpoint opportunity: Client initialization
             await client.initialize();
             clientInitialized = true;
         } catch (error) {
-            console.error('Failed to initialize GTFS client:', error);
+            console.error('Failed to initialize GTFS client:', {
+                message: error.message,
+                stack: error.stack
+            });
             return res.status(500).json({ 
                 error: 'Service initialization failed',
-                message: process.env.NODE_ENV === 'development' ? error.message : undefined
+                message: process.env.NODE_ENV === 'development' ? error.message : undefined,
+                stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
             });
         }
     }
@@ -45,13 +61,19 @@ app.use(express.static(join(__dirname, 'public')));
 // API endpoint for vehicle positions
 app.get('/api/vehicles', async (req, res) => {
     try {
+        // Breakpoint opportunity: Before fetching positions
         const positions = await client.getVehiclePositions();
         res.json(positions);
     } catch (error) {
-        console.error('Error fetching vehicle positions:', error);
+        // Breakpoint opportunity: Error handling
+        console.error('Error fetching vehicle positions:', {
+            message: error.message,
+            stack: error.stack
+        });
         res.status(500).json({ 
             error: 'Failed to fetch vehicle positions',
-            message: process.env.NODE_ENV === 'development' ? error.message : undefined
+            message: process.env.NODE_ENV === 'development' ? error.message : undefined,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
         });
     }
 });
@@ -65,6 +87,10 @@ app.get('*', (req, res) => {
 if (process.env.NODE_ENV !== 'production') {
     app.listen(port, () => {
         console.log(`Server running at http://localhost:${port}`);
+        console.log('Debugger is available. To start debugging:');
+        console.log('1. Open Chrome DevTools');
+        console.log('2. Click the Node.js icon or visit chrome://inspect');
+        console.log('3. Click "Open dedicated DevTools for Node"');
     });
 }
 
