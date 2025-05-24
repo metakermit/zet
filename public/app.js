@@ -38,15 +38,11 @@ function getVehicleType(vehicle) {
     const routeId = vehicle.trip?.routeId;
     if (routeId) {
         const routeNumber = parseInt(routeId);
-        // In Zagreb, tram routes are exactly: 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 17
-        const tramRoutes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 17];
-        return tramRoutes.includes(routeNumber) ? 'tram' : 'bus';
+        return (routeNumber < 100) ? 'tram' : 'bus';
     }
     
-    // Fallback to vehicle ID if route ID is not available
-    const vehicleNumber = parseInt(vehicle.vehicleId);
-    const tramRoutes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 17];
-    return tramRoutes.includes(vehicleNumber) ? 'tram' : 'bus';
+    // Fallback to always bus
+    return 'bus';
 }
 
 // Function to create popup content
@@ -97,12 +93,6 @@ async function updateVehiclePositions() {
     try {
         const response = await fetch('/api/vehicles');
         const vehicles = await response.json();
-
-        // Log all vehicle IDs and their types
-        console.log('All vehicles:');
-        vehicles.forEach(vehicle => {
-            console.log(`ID: ${vehicle.id}, VehicleID: ${vehicle.vehicleId}, Label: ${vehicle.label}, Type: ${getVehicleType(vehicle)}`);
-        });
 
         // Remove vehicles that are no longer in the feed
         for (const [id, marker] of vehicleMarkers) {

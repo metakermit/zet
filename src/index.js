@@ -61,12 +61,6 @@ class ZagrebGTFSClient {
             return [];
         }
 
-        // Log the first few raw entities
-        console.log('Raw GTFS entities (first 5):');
-        feed.entity.slice(0, 5).forEach(entity => {
-            console.log(JSON.stringify(entity, null, 2));
-        });
-
         return feed.entity.map(entity => {
             const vehicle = entity.vehicle;
             if (!vehicle) return null;
