@@ -58,11 +58,33 @@ app.use(async (req, res, next) => {
 // Serve static files from the public directory
 app.use(express.static(join(__dirname, 'public')));
 
+// Cache configuration
+const CACHE_TTL_MS = parseInt(process.env.CACHE_TTL_MS || '10000', 10); // Default 10 seconds
+let vehicleCache = {
+    data: null,
+    timestamp: null
+};
+
 // API endpoint for vehicle positions
 app.get('/api/vehicles', async (req, res) => {
     try {
+        const now = Date.now();
+        
+        // Check if cache is still valid
+        if (vehicleCache.data && vehicleCache.timestamp && (now - vehicleCache.timestamp) < CACHE_TTL_MS) {
+            // Return cached data
+            return res.json(vehicleCache.data);
+        }
+        
         // Breakpoint opportunity: Before fetching positions
         const positions = await client.getVehiclePositions();
+        
+        // Update cache
+        vehicleCache = {
+            data: positions,
+            timestamp: now
+        };
+        
         res.json(positions);
     } catch (error) {
         // Breakpoint opportunity: Error handling
@@ -70,6 +92,13 @@ app.get('/api/vehicles', async (req, res) => {
             message: error.message,
             stack: error.stack
         });
+        
+        // If we have cached data, return it even if it's stale (better than nothing)
+        if (vehicleCache.data) {
+            console.log('Returning stale cache due to error');
+            return res.json(vehicleCache.data);
+        }
+        
         res.status(500).json({ 
             error: 'Failed to fetch vehicle positions',
             message: process.env.NODE_ENV === 'development' ? error.message : undefined,

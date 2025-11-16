@@ -216,6 +216,6 @@ async function updateVehiclePositions() {
     }
 }
 
-// Update positions every 10 seconds
+// Update positions every 5 seconds (server-side caching reduces API load)
 updateVehiclePositions();
-setInterval(updateVehiclePositions, 10000); 
+setInterval(updateVehiclePositions, 5000); 
