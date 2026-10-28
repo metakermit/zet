@@ -34,3 +34,5 @@ coverage/
 # Temporary files
 tmp/
 temp/ 
+# Local raw archive written by the ingest worker
+data/

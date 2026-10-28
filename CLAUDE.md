@@ -7,6 +7,7 @@ Real-time map of Zagreb public transport (ZET trams and buses), being extended i
 - `src/index.js`: `ZagrebGTFSClient`. Fetches the ZET GTFS-RT protobuf (`https://www.zet.hr/gtfs-rt-protobuf`), decodes it with protobufjs using `proto/gtfs-realtime.proto`, and flattens VehiclePositions to JSON. Non-vehicle entities are dropped.
 - `server.js`: Express. `GET /api/vehicles` with a 10 s in-memory cache (stale data served on error), plus static files from `public/`.
 - `public/app.js`: vanilla Leaflet map. Polls every 5 s, emoji markers with route labels, locate-me control. Tram vs bus is currently guessed from route number (< 100 = tram).
+- `worker/ingest.js`: ingest worker. Archives every new raw snapshot (gzipped) via `src/archive.js` (filesystem by default, S3-compatible when `ARCHIVE_S3_*` is set). `scripts/inspect-archive.js` summarises a day. See README for env vars.
 - Node ≥ 18, ESM (`"type": "module"`). `npm run dev` runs nodemon with the inspector.
 
 ## Direction (see PLAN.md)

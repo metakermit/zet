@@ -99,7 +99,7 @@ Built into the existing app: MapLibre / deck.gl with segments coloured by vehicl
 
 ## Open questions
 
-- Actual refresh rate of the ZET GTFS-RT feed, and whether it carries TripUpdates as well as VehiclePositions
+- ~~Actual refresh rate of the ZET GTFS-RT feed, and whether it carries TripUpdates~~: first measurement (2026-10-28, evening) shows the header timestamp advancing every ~11–12 s, and the feed carries TripUpdates (~480) alongside VehiclePositions (~300). Snapshots are ~21 KB gzipped, so ~4–5 GB/month. Confirm over a full day from the ingest stats.
 - How often ZET publishes new static GTFS, and whether realtime `tripId`s match it reliably
 - Whether `occupancyStatus` is ever populated (it would allow passenger weighting instead of trip counts)
 
