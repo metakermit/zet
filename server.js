@@ -2,6 +2,7 @@ import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import os from 'os';
+import { readdir } from 'fs/promises';
 import ZagrebGTFSClient from './src/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -106,6 +107,35 @@ app.get('/api/vehicles', async (req, res) => {
             stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
         });
     }
+});
+
+// Analytics outputs written by the Python jobs (data/derived/<YYYY-MM-DD>/).
+const DERIVED_DIR = join(process.env.ARCHIVE_DIR || join(__dirname, 'data'), 'derived');
+
+app.get('/api/analytics/days', async (req, res) => {
+    try {
+        const entries = await readdir(DERIVED_DIR, { withFileTypes: true });
+        const days = entries
+            .filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
+            .map((e) => e.name)
+            .sort()
+            .reverse();
+        res.json(days);
+    } catch (error) {
+        if (error.code === 'ENOENT') return res.json([]);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/analytics/:day/:file(summary.json|segments.geojson)', (req, res) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(req.params.day)) return res.status(400).end();
+    res.sendFile(join(DERIVED_DIR, req.params.day, req.params.file), (err) => {
+        if (err && !res.headersSent) res.status(404).json({ error: 'not processed' });
+    });
+});
+
+app.get('/analytics', (req, res) => {
+    res.sendFile(join(__dirname, 'public', 'analytics.html'));
 });
 
 // Handle all other routes by serving index.html

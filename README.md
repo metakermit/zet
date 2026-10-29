@@ -76,6 +76,28 @@ security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates
 export NODE_EXTRA_CA_CERTS=~/.macos-roots.pem
 ```
 
+## Analytics (proof of concept)
+
+Python jobs in `analytics/` turn the raw archive into per-segment time-loss statistics, and `/analytics` shows them on a map. Outputs are files for now (Parquet + GeoJSON under `data/`); they move to Postgres + PostGIS once hosting is set up.
+
+```bash
+PYTHON=python3.13 npm run analytics:setup   # once: creates .venv (tested with Python 3.13)
+npm run analytics:static                    # download + load ZET static GTFS into data/gtfs/<feed_version>/
+npm run analytics:process -- 2026-10-28     # process one service day into data/derived/2026-10-28/
+npm run dev                                 # then open http://localhost:3000/analytics
+```
+
+`analytics:process` accepts `--min-samples N` (default 20), the number of traversals a segment needs before it gets a free-flow baseline. With only an hour or two of data, use something like `--min-samples 3`. Reprocessing a day replaces its output.
+
+What it does, per service day (see PLAN.md for the reasoning):
+
+1. Reads pings from the archive, drops stale (> 5 min old), duplicate, trip-less, cancelled-trip and out-of-area pings.
+2. Projects each ping onto its trip's shape in EPSG:3765, searching only near the previous position (50 m back, up to 30 m/s forward), so loops work. The first ping of a trip, and any ping after 3 consecutive off-route pings (> 40 m), is anchored to the pass of the shape closest to where the schedule puts the vehicle.
+3. Interpolates when each stop is passed; consecutive stops give stop-to-stop segment traversals.
+4. Splits each traversal into dwell (stopped within 30 m of a stop), stopped elsewhere and running time. "Stopped" means moving slower than 1 m/s between pings.
+5. Free-flow running time is the 15th percentile over the trailing 28 days of processed days. **Time lost = stopped elsewhere + max(0, running − free flow).**
+6. Punctuality (passing time vs scheduled departure), delay growth per segment, headway CV per route and hour, vehicles in service per minute, km driven.
+
 ## Data Source
 
 The application uses the GTFS real-time feed from ZET:

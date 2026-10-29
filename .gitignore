@@ -36,3 +36,7 @@ tmp/
 temp/ 
 # Local raw archive written by the ingest worker
 data/
+
+# Python venv for analytics jobs
+.venv/
+__pycache__/

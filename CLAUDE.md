@@ -8,6 +8,8 @@ Real-time map of Zagreb public transport (ZET trams and buses), being extended i
 - `server.js`: Express. `GET /api/vehicles` with a 10 s in-memory cache (stale data served on error), plus static files from `public/`.
 - `public/app.js`: vanilla Leaflet map. Polls every 5 s, emoji markers with route labels, locate-me control. Tram vs bus is currently guessed from route number (< 100 = tram).
 - `worker/ingest.js`: ingest worker. Archives every new raw snapshot (gzipped) via `src/archive.js` (filesystem by default, S3-compatible when `ARCHIVE_S3_*` is set). `scripts/inspect-archive.js` summarises a day. See README for env vars.
+- `analytics/` (Python, `.venv`): `static_gtfs.py` loads versioned static GTFS (patterns, stop distances along shapes, stop-to-stop segments) into `data/gtfs/<feed_version>/`; `process_day.py` turns one service day of raw archive into `data/derived/<date>/` (traversals, stop crossings, 15-min bins, `segments.geojson`, `summary.json`). Proof of concept: files instead of PostGIS for now.
+- `public/analytics.html` + `analytics.js`: dashboard at `/analytics`, served from `data/derived` by `server.js`.
 - Node ≥ 18, ESM (`"type": "module"`). `npm run dev` runs nodemon with the inspector.
 
 ## Direction (see PLAN.md)

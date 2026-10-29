@@ -9,7 +9,10 @@
     "dev": "nodemon --inspect server.js",
     "ingest": "node worker/ingest.js",
     "ingest:dev": "nodemon --watch worker --watch src worker/ingest.js",
-    "archive:inspect": "node scripts/inspect-archive.js"
+    "archive:inspect": "node scripts/inspect-archive.js",
+    "analytics:setup": "${PYTHON:-python3} -m venv .venv && .venv/bin/pip install -r analytics/requirements.txt",
+    "analytics:static": ".venv/bin/python -m analytics.static_gtfs",
+    "analytics:process": ".venv/bin/python -m analytics.process_day"
   },
   "dependencies": {
     "aws4fetch": "^1.0.20",

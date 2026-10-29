@@ -99,9 +99,17 @@ Built into the existing app: MapLibre / deck.gl with segments coloured by vehicl
 
 ## Open questions
 
-- ~~Actual refresh rate of the ZET GTFS-RT feed, and whether it carries TripUpdates~~: first measurement (2026-10-28, evening) shows the header timestamp advancing every ~11–12 s, and the feed carries TripUpdates (~480) alongside VehiclePositions (~300). Snapshots are ~21 KB gzipped, so ~4–5 GB/month. Confirm over a full day from the ingest stats.
-- How often ZET publishes new static GTFS, and whether realtime `tripId`s match it reliably
-- Whether `occupancyStatus` is ever populated (it would allow passenger weighting instead of trip counts)
+- ~~Actual refresh rate of the ZET GTFS-RT feed, and whether it carries TripUpdates~~: first measurement (2026-10-28, evening) shows the header timestamp advancing every ~11–12 s, and each vehicle's own timestamp every ~11 s (median; p90 21 s). The feed carries TripUpdates (~480, mostly 1–2 stop_time_updates each) alongside VehiclePositions (~300). Snapshots are ~21 KB gzipped, so ~4–5 GB/month. Confirm over a full day from the ingest stats.
+- ~~Whether realtime `tripId`s match static GTFS~~: 289/289 matched feed 000397, and pings carry `start_date`. Keep watching across feed changes.
+- How often ZET publishes new static GTFS (feed 000397 published 2026-10-21; the URL is `https://www.zet.hr/gtfs-scheduled/latest`).
+- ~~Whether `occupancyStatus` is ever populated~~: not populated, nor are `speed`, `bearing`, `currentStatus`, `congestionLevel` or vehicle labels. Stopped time has to be inferred from movement.
+- Static GTFS has no `shape_dist_traveled`; stop positions along shapes are computed (median offset 0.6 m; one stop at 0,0 and ~20 more than 60 m off, flagged on segments).
+- About 7% of pings are > 40 m from their trip's shape. About half are near trip ends (layovers, next trip already assigned); the rest are concentrated on tram lines 1, 3, 5, 6, 13 (possibly a diversion). Worth checking per line over a full day.
+- Definition of time lost: the proof of concept counts **stopped elsewhere + excess running**, since waiting at a red light or in a queue is the clearest interference and isn't part of running time. The plan above defines excess delay on running time only; settle which one the dashboard ranks by.
+
+## Proof of concept status (2026-10-28)
+
+Phases 2–4 run locally end to end on files (`analytics/`, `/analytics`), without Postgres: versioned static loads, stop-to-stop segments, projection, traversals, dwell/stopped/running split, free-flow baseline, punctuality, headway CV, aggregates and a Leaflet dashboard. Not done yet: Postgres + PostGIS tables, fixed-length street segments, OSM separation and signal tags, reading the archive from R2/B2, the 15-min × day-type view in the dashboard (bins are computed), `route_type` in the live map.
 
 ## Known issues in the current live map (fix along the way)
 

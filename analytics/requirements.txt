@@ -1,0 +1,6 @@
+pandas>=2.2
+numpy>=2
+shapely>=2
+pyproj>=3.6
+pyarrow>=15
+gtfs-realtime-bindings>=1.0
