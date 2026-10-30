@@ -50,23 +50,34 @@ function modeMatches(f) {
     return mode === 'all' || (mode === 'tram') === f.properties.tram;
 }
 
-function metricValue(s) {
-    if ($('metric').value === 'total') return s[LOST];
-    return s[N] >= MIN_N_PER_VEHICLE ? s[LOST] / s[N] : null;
-}
+const fmtTime = (s) => (s < 120 ? fmtS(s) : fmtMin(s));
+const fmtKmh = (v) => `${Math.round(v)} km/h`;
+
+// Speed is distance over total time (dwell included), so it is what a passenger experiences.
+const speedKmh = (f, s) => (s[DUR] ? (3.6 * f.properties.length_m * s[N]) / s[DUR] : null);
+
+// lowIsBad metrics get the scale flipped: breaks come from the slow tail and the darkest colour means slowest.
+const METRICS = {
+    total: { title: 'Time lost (sum)', value: (f, s) => s[LOST], fmt: fmtTime },
+    per: { title: 'Lost per vehicle', value: (f, s) => (s[N] >= MIN_N_PER_VEHICLE ? s[LOST] / s[N] : null), fmt: fmtTime },
+    speed: { title: 'Mean speed', value: (f, s) => (s[N] >= MIN_N_PER_VEHICLE ? speedKmh(f, s) : null), fmt: fmtKmh, lowIsBad: true },
+};
+const metric = () => METRICS[$('metric').value];
 
 // Quantile breaks so the colour scale adapts to whatever is selected.
 function breaks(values) {
     const v = values.filter((x) => x > 0).sort((a, b) => a - b);
     if (!v.length) return [];
     const q = (p) => v[Math.min(v.length - 1, Math.floor(p * v.length))];
-    return [q(0.5), q(0.75), q(0.9), q(0.97)];
+    return metric().lowIsBad ? [q(0.03), q(0.1), q(0.25), q(0.5)] : [q(0.5), q(0.75), q(0.9), q(0.97)];
 }
+
+const stepColour = (i) => SEQ[metric().lowIsBad ? SEQ.length - 1 - i : i];
 
 function colourFor(value, b) {
     let i = 0;
     while (i < b.length && value > b[i]) i++;
-    return SEQ[i];
+    return stepColour(i);
 }
 
 const SPLIT = [['running', RUNNING], ['stopped', STOPPED], ['dwell', DWELL]];
@@ -93,6 +104,7 @@ function popupHtml(f, s) {
         <div class="kv">
             <span>Traversals</span><span>${s[N]}</span>
             <span>Mean time</span><span>${fmtS(s[DUR] / s[N])}</span>
+            <span>Mean speed</span><span>${fmtKmh(speedKmh(f, s))}</span>
             <span>Free-flow running</span><span>${p.free_flow_s == null ? 'not enough data' : fmtS(p.free_flow_s)}</span>
             <span>Lost per vehicle</span><span>${fmtS(s[LOST] / s[N])}</span>
             <span>Total lost</span><span>${fmtMin(s[LOST])}</span>
@@ -105,8 +117,10 @@ function renderMap(rows, b) {
     segLayer.clearLayers();
     lines = new Map();
     const maxN = Math.max(1, ...rows.map((r) => r.s[N]));
-    // Draw low values first so the worst segments sit on top.
-    for (const r of [...rows].sort((a, b2) => (a.value ?? -1) - (b2.value ?? -1))) {
+    // Draw the worst segments last so they sit on top; segments without a value go first.
+    const m = metric();
+    const rank = (r) => (r.value == null ? -Infinity : m.lowIsBad ? -r.value : r.value);
+    for (const r of [...rows].sort((a, b2) => rank(a) - rank(b2))) {
         const latlngs = r.f.geometry.coordinates.map(([lon, lat]) => [lat, lon]);
         const line = L.polyline(latlngs, {
             color: r.value == null ? css('--axis') : colourFor(r.value, b),
@@ -121,14 +135,14 @@ function renderMap(rows, b) {
         lines.set(r.f.properties.id, line);
     }
 
-    const unit = (s) => (s < 120 ? fmtS(s) : fmtMin(s));
-    const title = $('metric').value === 'total' ? 'Time lost (sum)' : 'Lost per vehicle';
+    const u = m.fmt;
     const labels = b.length
-        ? [`≤ ${unit(b[0])}`, `${unit(b[0])}–${unit(b[1])}`, `${unit(b[1])}–${unit(b[2])}`, `${unit(b[2])}–${unit(b[3])}`, `> ${unit(b[3])}`]
+        ? [`≤ ${u(b[0])}`, `${u(b[0])}–${u(b[1])}`, `${u(b[1])}–${u(b[2])}`, `${u(b[2])}–${u(b[3])}`, `> ${u(b[3])}`]
         : [];
-    legend.getContainer().innerHTML = `<strong>${title}</strong>${labels
-        .map((l, i) => `<div class="row"><span class="line" style="background:${SEQ[i]}"></span>${l}</div>`)
-        .join('')}<div class="row" style="color:var(--muted)">width = traffic</div>`;
+    // Legend always reads light to dark.
+    const rowsHtml = labels.map((l, i) => `<div class="row"><span class="line" style="background:${stepColour(i)}"></span>${l}</div>`);
+    if (m.lowIsBad) rowsHtml.reverse();
+    legend.getContainer().innerHTML = `<strong>${m.title}</strong>${rowsHtml.join('')}<div class="row" style="color:var(--muted)">width = traffic</div>`;
 }
 
 function renderTop(rows) {
@@ -258,7 +272,7 @@ function renderQuality() {
 function render() {
     const rows = features.filter(modeMatches).map((f) => {
         const s = sumHours(f);
-        return { f, s, value: s[N] ? metricValue(s) : null };
+        return { f, s, value: s[N] ? metric().value(f, s) : null };
     }).filter((r) => r.s[N] > 0);
     const b = breaks(rows.map((r) => r.value).filter((v) => v != null));
     renderMap(rows, b);
