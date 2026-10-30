@@ -10,7 +10,8 @@ Real-time map of Zagreb public transport (ZET trams and buses), being extended i
 - `worker/ingest.js`: ingest worker. Archives every new raw snapshot (gzipped) via `src/archive.js` (filesystem by default, S3-compatible when `ARCHIVE_S3_*` is set). `scripts/inspect-archive.js` summarises a day. See README for env vars.
 - `analytics/` (Python, `.venv`): `static_gtfs.py` loads versioned static GTFS (patterns, stop distances along shapes, stop-to-stop segments) into `data/gtfs/<feed_version>/`; `process_day.py` turns one service day of raw archive into `data/derived/<date>/` (traversals, stop crossings, 15-min bins, `segments.geojson`, `summary.json`). Proof of concept: files instead of PostGIS for now.
 - `public/analytics.html` + `analytics.js`: dashboard at `/analytics`, served from `data/derived` by `server.js`.
-- Node ≥ 18, ESM (`"type": "module"`). `npm run dev` runs nodemon with the inspector.
+- `render.yaml`: Render Blueprint (web service + ingest worker, Frankfurt).
+- Node ≥ 20 (`.nvmrc` pins the major), ESM (`"type": "module"`). `npm run dev` runs nodemon with the inspector.
 
 ## Direction (see PLAN.md)
 

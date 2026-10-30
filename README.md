@@ -69,12 +69,33 @@ Configuration (environment variables):
 | `INGEST_POLL_INTERVAL_MS` | `10000` | |
 | `INGEST_STATS_INTERVAL_MS` | `60000` | |
 
-**Node 18 and zet.hr's certificate:** zet.hr uses a Sectigo R46 root that Node 18's bundled CA list doesn't include, so fetches fail with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` (this affects `npm run dev` too). Use a newer Node LTS, or point Node at the macOS roots:
+**Node version and zet.hr's certificate:** the project needs Node ≥ 20; `.nvmrc` pins the major version used on Render (`nvm use` picks it up locally). zet.hr uses a Sectigo R46 root that Node 18's bundled CA list doesn't include, so fetches fail there with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`. If you're stuck on an old Node, point it at the macOS roots:
 
 ```bash
 security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain > ~/.macos-roots.pem
 export NODE_EXTRA_CA_CERTS=~/.macos-roots.pem
 ```
+
+## Deploying to Render
+
+`render.yaml` is a [Render Blueprint](https://render.com/docs/blueprint-spec) with two services in Frankfurt:
+
+- `zet-web` (web service): the live map, `/analytics` and `/api/vehicles`. Health check at `/healthz`.
+- `zet-ingest` (background worker): `npm run ingest`, archiving to an S3-compatible bucket.
+
+One-time setup:
+
+1. Create a bucket (e.g. Cloudflare R2, EU jurisdiction) and an API token with object read + write on that bucket only.
+2. Check the credentials locally before deploying:
+   ```bash
+   ARCHIVE_S3_BUCKET=... ARCHIVE_S3_ENDPOINT=... ARCHIVE_S3_ACCESS_KEY_ID=... ARCHIVE_S3_SECRET_ACCESS_KEY=... npm run ingest
+   # in another shell, same env:
+   npm run archive:inspect
+   ```
+3. In Render: **New → Blueprint**, pick this repo, and fill in the `ARCHIVE_S3_*` values it prompts for (they're `sync: false`, so never committed).
+4. Watch the worker logs for the `ingest worker starting` line with the S3 archive, then a `stats` line every minute with `archived` > 0 and `writeErrors` 0.
+
+Builds run `npm ci`, so `package-lock.json` must stay committed and in sync with `package.json`. On redeploy the worker gets SIGTERM and up to 60 s to flush buffered snapshots.
 
 ## Analytics (proof of concept)
 

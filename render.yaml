@@ -1,0 +1,39 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# Node version comes from .nvmrc.
+services:
+  # Live map, analytics dashboard and /api/vehicles.
+  - type: web
+    name: zet-web
+    runtime: node
+    region: frankfurt
+    plan: starter # free instances sleep when idle, which breaks the live map
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+  # Polls the GTFS-RT feed and archives every raw snapshot to R2/B2.
+  - type: worker
+    name: zet-ingest
+    runtime: node
+    region: frankfurt
+    plan: starter
+    buildCommand: npm ci --omit=dev
+    startCommand: npm run ingest
+    # Time to flush buffered snapshots after SIGTERM on redeploy (default 30 s).
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ARCHIVE_S3_BUCKET
+        sync: false
+      - key: ARCHIVE_S3_ENDPOINT
+        sync: false
+      - key: ARCHIVE_S3_REGION
+        value: auto
+      - key: ARCHIVE_S3_ACCESS_KEY_ID
+        sync: false
+      - key: ARCHIVE_S3_SECRET_ACCESS_KEY
+        sync: false

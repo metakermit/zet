@@ -119,5 +119,4 @@ Phases 2–4 run locally end to end on files (`analytics/`, `/analytics`), witho
 - `setIcon()` runs on every marker every poll, and `vehicles.find` inside a loop is O(n²).
 - No staleness check on `vehicle.timestamp` (ghost vehicles).
 - Dead code: unused location globals, `node-fetch`, and the `main()` guard in `src/index.js`.
-- `package-lock.json` is gitignored, so builds aren't reproducible.
 - README says 10 s updates; the client polls every 5 s.

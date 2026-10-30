@@ -34,6 +34,9 @@ app.use((err, req, res, next) => {
     });
 });
 
+// Render health check; registered before the init middleware so it never touches the feed.
+app.get('/healthz', (req, res) => res.send('ok'));
+
 // Initialize client before handling requests
 let clientInitialized = false;
 app.use(async (req, res, next) => {
@@ -156,17 +159,16 @@ function getLocalIP() {
     return 'localhost';
 }
 
-// Only start the server if we're not in a serverless environment
-if (process.env.NODE_ENV !== 'production') {
-    app.listen(port, '0.0.0.0', () => {
+app.listen(port, '0.0.0.0', () => {
+    console.log(`Server running at http://localhost:${port}`);
+    if (process.env.NODE_ENV !== 'production') {
         const localIP = getLocalIP();
-        console.log(`Server running at http://localhost:${port}`);
         console.log(`Server accessible on network at http://${localIP}:${port}`);
         console.log('Debugger is available. To start debugging:');
         console.log('1. Open Chrome DevTools');
         console.log('2. Click the Node.js icon or visit chrome://inspect');
         console.log('3. Click "Open dedicated DevTools for Node"');
-    });
-}
+    }
+});
 
 export default app; 
