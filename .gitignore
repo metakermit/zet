@@ -3,7 +3,6 @@ node_modules/
 npm-debug.log
 yarn-debug.log
 yarn-error.log
-package-lock.json
 yarn.lock
 
 # Environment variables
@@ -34,3 +33,9 @@ coverage/
 # Temporary files
 tmp/
 temp/ 
+# Local raw archive written by the ingest worker
+data/
+
+# Python venv for analytics jobs
+.venv/
+__pycache__/
