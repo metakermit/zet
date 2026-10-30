@@ -10,6 +10,8 @@ services:
     buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /healthz
+    domains:
+      - zet.metakermit.com
     envVars:
       - key: NODE_ENV
         value: production
