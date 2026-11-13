@@ -111,6 +111,10 @@ Built into the existing app: MapLibre / deck.gl with segments coloured by vehicl
 
 Phases 2–4 run locally end to end on files (`analytics/`, `/analytics`), without Postgres: versioned static loads, stop-to-stop segments, projection, traversals, dwell/stopped/running split, free-flow baseline, punctuality, headway CV, aggregates and a Leaflet dashboard. Not done yet: Postgres + PostGIS tables, fixed-length street segments, OSM separation and signal tags, reading the archive from R2/B2, the 15-min × day-type view in the dashboard (bins are computed), `route_type` in the live map.
 
+## Deployment status (2026-11-13)
+
+Ingest archives to R2 since 2026-11-13 12:38 UTC (earlier days exist only in local `data/raw`). The nightly cron job (`zet-nightly`) processes from R2 into `derived/` in the same bucket, and the web service reads it from there. Static feed 000398 (from 2026-11-09) has ~5% of trips, all on tram lines 2/4/5/6/9/12/14/17, without a `shape_id` (likely diversions), plus a one-point shape (330_4); those trips are skipped and counted as `no_shape`.
+
 ## Known issues in the current live map (fix along the way)
 
 - Express error handler is registered before routes, so it never fires.

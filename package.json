@@ -12,7 +12,8 @@
     "archive:inspect": "node scripts/inspect-archive.js",
     "analytics:setup": "${PYTHON:-python3} -m venv .venv && .venv/bin/pip install -r analytics/requirements.txt",
     "analytics:static": ".venv/bin/python -m analytics.static_gtfs",
-    "analytics:process": ".venv/bin/python -m analytics.process_day"
+    "analytics:process": ".venv/bin/python -m analytics.process_day",
+    "analytics:nightly": ".venv/bin/python -m analytics.nightly"
   },
   "dependencies": {
     "aws4fetch": "^1.0.20",

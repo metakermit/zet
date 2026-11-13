@@ -147,6 +147,13 @@ async function main() {
         prefix: ARCHIVE_PREFIX,
         pollIntervalMs: POLL_INTERVAL_MS,
     });
+    // Fail loudly on a misconfigured archive, but keep polling: snapshots buffer until it works.
+    try {
+        await archive.list(`${ARCHIVE_PREFIX}/0000/`);
+        log('archive reachable');
+    } catch (error) {
+        log(`ERROR archive unreachable, snapshots will only buffer in memory: ${error.message}`);
+    }
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
     setInterval(logStats, STATS_INTERVAL_MS).unref();

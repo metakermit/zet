@@ -82,6 +82,9 @@ export NODE_EXTRA_CA_CERTS=~/.macos-roots.pem
 
 - `zet-web` (web service): the live map, `/analytics` and `/api/vehicles`. Health check at `/healthz`.
 - `zet-ingest` (background worker): `npm run ingest`, archiving to an S3-compatible bucket.
+- `zet-nightly` (cron job, 05:30 UTC): `python -m analytics.nightly`, loads new static GTFS versions and processes yesterday's service day from the bucket back into it. Needs the `standard` plan (2 GB); a full day doesn't fit in 512 MB.
+
+All three use the same `ARCHIVE_S3_*` variables. `zet-web` only reads (`derived/`), so it can have a read-only token.
 
 One-time setup:
 
@@ -92,19 +95,21 @@ One-time setup:
    # in another shell, same env:
    npm run archive:inspect
    ```
-3. In Render: **New → Blueprint**, pick this repo, and fill in the `ARCHIVE_S3_*` values it prompts for (they're `sync: false`, so never committed).
-4. Watch the worker logs for the `ingest worker starting` line with the S3 archive, then a `stats` line every minute with `archived` > 0 and `writeErrors` 0.
+3. In Render: **New → Blueprint**, pick this repo, and fill in the `ARCHIVE_S3_*` values it prompts for, for each service (they're `sync: false`, so never committed). The endpoint is `https://<account>.r2.cloudflarestorage.com`, without the bucket name the R2 dashboard appends (both are accepted, but that's the form to use).
+4. Watch the worker logs for `ingest worker starting` with the S3 archive and `archive reachable`, then a `stats` line every minute with `archived` > 0 and `writeErrors` 0.
+5. After the first night, `zet-nightly`'s log ends with `done in … s` and `/analytics` lists the day. To process a day by hand, use **Trigger Run** on the cron job, or run `python -m analytics.nightly --date YYYY-MM-DD` from its shell.
 
 Builds run `npm ci`, so `package-lock.json` must stay committed and in sync with `package.json`. On redeploy the worker gets SIGTERM and up to 60 s to flush buffered snapshots.
 
 ## Analytics (proof of concept)
 
-Python jobs in `analytics/` turn the raw archive into per-segment time-loss statistics, and `/analytics` shows them on a map. Outputs are files for now (Parquet + GeoJSON under `data/`); they move to Postgres + PostGIS once hosting is set up.
+Python jobs in `analytics/` turn the raw archive into per-segment time-loss statistics, and `/analytics` shows them on a map. Jobs and the web service read and write the same keys either in `data/` or, when `ARCHIVE_S3_BUCKET` is set, in the bucket: `raw/` (snapshots), `gtfs/<feed_version>/` (static GTFS) and `derived/<date>/` (Parquet + GeoJSON outputs; `summary.json` is written last and marks the day as done). The Python jobs don't read `.env`; export the variables (`set -a; . ./.env; set +a`) to run them against the bucket.
 
 ```bash
 PYTHON=python3.13 npm run analytics:setup   # once: creates .venv (tested with Python 3.13)
 npm run analytics:static                    # download + load ZET static GTFS into data/gtfs/<feed_version>/
 npm run analytics:process -- 2026-10-28     # process one service day into data/derived/2026-10-28/
+npm run analytics:nightly                   # what the cron job runs: static GTFS update + yesterday
 npm run dev                                 # then open http://localhost:3000/analytics
 ```
 

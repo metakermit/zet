@@ -61,7 +61,10 @@ class FileArchive {
 // Any S3-compatible store: Cloudflare R2, Backblaze B2, MinIO. Path-style URLs.
 class S3Archive {
     constructor({ endpoint, bucket, region, accessKeyId, secretAccessKey }) {
-        this.baseUrl = `${endpoint.replace(/\/$/, '')}/${bucket}`;
+        // The R2 dashboard shows the S3 URL with the bucket appended; don't add it twice.
+        endpoint = endpoint.replace(/\/+$/, '');
+        if (endpoint.endsWith(`/${bucket}`)) endpoint = endpoint.slice(0, -bucket.length - 1);
+        this.baseUrl = `${endpoint}/${bucket}`;
         this.client = new AwsClient({ accessKeyId, secretAccessKey, region, service: 's3' });
         this.description = `s3 (${this.baseUrl})`;
     }
@@ -70,7 +73,9 @@ class S3Archive {
         const response = await this.client.fetch(url, init);
         if (!response.ok) {
             const text = await response.text();
-            throw new Error(`S3 ${init?.method || 'GET'} ${url} failed: ${response.status} ${text.slice(0, 300)}`);
+            const error = new Error(`S3 ${init?.method || 'GET'} ${url} failed: ${response.status} ${text.slice(0, 300)}`);
+            error.status = response.status;
+            throw error;
         }
         return response;
     }
@@ -101,6 +106,10 @@ class S3Archive {
         } while (token);
         return keys.sort();
     }
+}
+
+export function isNotFound(error) {
+    return error?.code === 'ENOENT' || error?.status === 404;
 }
 
 export function createArchive(env = process.env) {

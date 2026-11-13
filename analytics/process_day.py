@@ -2,21 +2,22 @@
 
     python -m analytics.process_day YYYY-MM-DD [--min-samples N]
 
-Idempotent: rewrites data/derived/<date>/ completely. Implements PLAN.md
-steps 1-7 for stop-to-stop segments.
+Reads and writes through the store (local data/ or the R2 bucket, see store.py).
+Idempotent: rewrites derived/<date>/ completely. Implements PLAN.md steps 1-7
+for stop-to-stop segments.
 """
 
 import argparse
+import io
 import json
-import shutil
 from datetime import datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
 
-from . import DERIVED_DIR, LOCAL_TZ, METHOD_VERSION
+from . import LOCAL_TZ, METHOD_VERSION
+from . import store as stores
 from .geo import dense_shape, to_metric
 from .pings import read_pings
 from .static_gtfs import version_for
@@ -29,6 +30,7 @@ REANCHOR_AFTER = 3        # consecutive off-route pings before searching the who
 STOPPED_SPEED_MS = 1.0    # slower than this between pings counts as stopped
 DWELL_RADIUS_M = 30.0     # stopped within this distance of a stop is dwell
 MAX_GAP_S = 60.0          # traversals with a longer ping gap are excluded from fine stats
+DEPART_M = 10.0           # a trip departs its first stop when it gets this far past it (beats terminus GPS jitter)
 FREE_FLOW_QUANTILE = 0.15
 FREE_FLOW_WINDOW_DAYS = 28
 
@@ -41,9 +43,9 @@ def service_day_origin(service_date):
 
 
 class Static:
-    def __init__(self, path: Path):
-        self.path = path
-        read = lambda name: pd.read_parquet(path / f"{name}.parquet")
+    def __init__(self, store, version):
+        self.version = version
+        read = lambda name: stores.read_parquet(store, f"gtfs/{version}/{name}.parquet")
         self.routes = read("routes").set_index("route_id")
         self.trips = read("trips").set_index("trip_id")
         self.stops = read("stops").set_index("stop_id")
@@ -110,6 +112,26 @@ def crossings(t, d, boundaries):
     return np.where(ok, tc, np.nan), np.where(ok, t1 - t0, np.nan)
 
 
+def pick_crossings(tc):
+    """Which run supplies each stop's crossing (-1: none), given a runs x stops matrix of crossing times.
+
+    A vehicle waiting at the terminus often drifts off the shape and re-anchors,
+    so the first stop can be "departed" several times; the last departure is the
+    real one. Every later stop takes its first crossing after that departure.
+    """
+    pick = np.full(tc.shape[1], -1)
+    first = tc[:, 0]
+    depart = -np.inf
+    if not np.isnan(first).all():
+        pick[0] = int(np.nanargmax(first))
+        depart = first[pick[0]]
+    with np.errstate(invalid="ignore"):
+        later = np.where(tc[:, 1:] >= depart, tc[:, 1:], np.nan)
+    has = ~np.isnan(later).all(axis=0)
+    pick[1:][has] = np.nanargmin(later[:, has], axis=0)
+    return pick
+
+
 def split_time(t, d, stop_d):
     """Cumulative dwell / stopped-elsewhere / running seconds at each ping.
 
@@ -131,7 +153,7 @@ def split_time(t, d, stop_d):
 
 def process_trips(pings, static, service_date):
     origin = service_day_origin(service_date)
-    stats = {"trip_instances": 0, "no_static_trip": 0, "off_route": 0, "backwards": 0, "anchors": 0}
+    stats = {"trip_instances": 0, "no_static_trip": 0, "no_shape": 0, "off_route": 0, "backwards": 0, "anchors": 0}
     trav_rows, cross_rows, km_rows = [], [], []
     st_by_trip = static.stop_times.set_index("trip_id").sort_index()
 
@@ -142,8 +164,11 @@ def process_trips(pings, static, service_date):
         if trip_id not in static.trips.index:
             stats["no_static_trip"] += 1
             continue
-        stats["trip_instances"] += 1
         trip = static.trips.loc[trip_id]
+        if pd.isna(trip["pattern_id"]):  # no usable shape in the static feed
+            stats["no_shape"] += 1
+            continue
+        stats["trip_instances"] += 1
         ps = static.pattern_stops[trip["pattern_id"]]
         sched = st_by_trip.loc[[trip_id]].sort_values("idx")
         stop_d = ps["dist_m"].to_numpy()
@@ -153,24 +178,38 @@ def process_trips(pings, static, service_date):
         t = g["ts"].to_numpy().astype(float)
         d, runs = project_trip(t, g["x"].to_numpy(), g["y"].to_numpy(), dense, sched_t, stop_d, stats)
 
+        # The first stop is usually at the very start of the shape (d = 0), where no ping
+        # can be before it; measure its departure a few metres past it instead.
+        boundaries = stop_d.astype(float)
+        boundaries[0] += DEPART_M
+        tracks = []
         for run in np.unique(runs[runs >= 0]):
             m = runs == run
             tr, dr = t[m], d[m]
             if len(tr) < 2:
                 continue
             km_rows.append((trip["route_id"], vehicle_id, trip_id, dr[-1] - dr[0], tr[-1] - tr[0]))
-            tc, gap = crossings(tr, dr, stop_d)
+            tracks.append((tr, dr, *crossings(tr, dr, boundaries)))
+        if not tracks:
+            continue
+
+        # One crossing per stop per trip instance, even when the trip was cut into several runs.
+        pick = pick_crossings(np.vstack([tc for _, _, tc, _ in tracks]))
+        for i in np.flatnonzero(pick >= 0):
+            _, _, tc, gap = tracks[pick[i]]
+            cross_rows.append((trip_id, vehicle_id, trip["route_id"], trip["direction_id"], int(i),
+                               ps.at[i, "stop_id"], tc[i], sched_t[i], gap[i]))
+
+        # A traversal needs both its crossings from the same run, to split its time.
+        for r in np.unique(pick[pick >= 0]):
+            tr, dr, tc, gap = tracks[r]
             cum = split_time(tr, dr, stop_d)
             cum_at = {k: np.interp(tc, tr, v) for k, v in cum.items()}
             dt = np.diff(tr)
-
-            for i in np.flatnonzero(~np.isnan(tc)):
-                cross_rows.append((trip_id, vehicle_id, trip["route_id"], trip["direction_id"], int(i),
-                                   ps.at[i, "stop_id"], tc[i], sched_t[i], gap[i]))
             for i in range(len(stop_d) - 1):
-                entry, exit_ = tc[i], tc[i + 1]
-                if np.isnan(entry) or np.isnan(exit_):
+                if pick[i] != r or pick[i + 1] != r:
                     continue
+                entry, exit_ = tc[i], tc[i + 1]
                 a = max(0, np.searchsorted(tr, entry, side="right") - 1)
                 b = np.searchsorted(tr, exit_, side="left")
                 max_gap = float(dt[a:b].max()) if b > a else float(gap[i + 1])
@@ -195,14 +234,14 @@ def process_trips(pings, static, service_date):
     return trav, cross, km, stats
 
 
-def free_flow(today_trav, service_date, min_samples):
+def free_flow(store, today_trav, service_date, min_samples):
     """15th percentile of running time per segment over the trailing window (including today)."""
     day = datetime.strptime(service_date, "%Y%m%d")
+    wanted = {f"derived/{day - timedelta(days=k):%Y-%m-%d}/traversals.parquet" for k in range(1, FREE_FLOW_WINDOW_DAYS)}
+    keys = sorted(k for k in store.list("derived/") if k in wanted)
     frames = [today_trav]
-    for k in range(1, FREE_FLOW_WINDOW_DAYS):
-        p = DERIVED_DIR / (day - timedelta(days=k)).strftime("%Y-%m-%d") / "traversals.parquet"
-        if p.exists():
-            frames.append(pd.read_parquet(p, columns=["segment_id", "running_s", "max_gap_s", "method_version"]))
+    for _, body in stores.get_many(store, keys):
+        frames.append(pd.read_parquet(io.BytesIO(body), columns=["segment_id", "running_s", "max_gap_s", "method_version"]))
     all_trav = pd.concat(frames, ignore_index=True)
     good = all_trav[(all_trav["max_gap_s"] <= MAX_GAP_S) & (all_trav["method_version"] == METHOD_VERSION)]
     g = good.groupby("segment_id")["running_s"]
@@ -221,7 +260,7 @@ def headway_cv(cross, routes):
     return out[out["gaps"] >= 10]
 
 
-def write_outputs(out_dir, service_date, static, pings, coverage, trav, cross, km, stats, ff, ff_days, min_samples):
+def write_outputs(store, out, service_date, static, pings, coverage, trav, cross, km, stats, ff, ff_days, min_samples):
     tz = LOCAL_TZ
     trav = trav.join(ff, on="segment_id")
     trav["good"] = trav["max_gap_s"] <= MAX_GAP_S
@@ -232,10 +271,10 @@ def write_outputs(out_dir, service_date, static, pings, coverage, trav, cross, k
     trav["bin15"] = entry_local.dt.hour * 4 + entry_local.dt.minute // 15
     trav["hour"] = entry_local.dt.hour
     trav["method_version"] = METHOD_VERSION
-    trav.to_parquet(out_dir / "traversals.parquet", index=False)
+    store.put(f"{out}/traversals.parquet", stores.parquet_bytes(trav))
 
     cross["method_version"] = METHOD_VERSION
-    cross.to_parquet(out_dir / "stop_crossings.parquet", index=False)
+    store.put(f"{out}/stop_crossings.parquet", stores.parquet_bytes(cross))
 
     good = trav[trav["good"]]
     agg_cols = dict(n=("duration_s", "size"), duration_s=("duration_s", "sum"), dwell_s=("dwell_s", "sum"),
@@ -246,7 +285,7 @@ def write_outputs(out_dir, service_date, static, pings, coverage, trav, cross, k
     bins = good.groupby(["segment_id", "bin15"]).agg(**agg_cols).reset_index()
     bins["day_type"] = day_type
     bins["method_version"] = METHOD_VERSION
-    bins.to_parquet(out_dir / "segment_bins.parquet", index=False)
+    store.put(f"{out}/segment_bins.parquet", stores.parquet_bytes(bins))
 
     # Vehicles in service per local minute (by snapshot time, so minutes before the archive started don't show partial counts).
     minute = pd.to_datetime(pings["poll_ts"], unit="s", utc=True).dt.tz_convert(tz).dt.floor("min")
@@ -303,13 +342,13 @@ def write_outputs(out_dir, service_date, static, pings, coverage, trav, cross, k
                 "h": by_hour,
             },
         })
-    (out_dir / "segments.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    store.put(f"{out}/segments.geojson", json.dumps({"type": "FeatureCollection", "features": features}).encode())
 
     sched_total = trav["scheduled_s"].sum()
     summary = {
         "service_date": service_date,
         "method_version": METHOD_VERSION,
-        "static_feed_version": static.path.name,
+        "static_feed_version": static.version,
         "processed_at": datetime.now(ZoneInfo("UTC")).isoformat(),
         "coverage": {**coverage, **stats},
         "traversals": len(trav),
@@ -324,8 +363,32 @@ def write_outputs(out_dir, service_date, static, pings, coverage, trav, cross, k
         "vehicles_per_minute": vpm_out,
         "routes": sorted(route_rows, key=lambda r: -r["lost_h"]),
     }
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=1, default=float))
+    # Written last: the dashboard lists a day only once its summary exists.
+    store.put(f"{out}/summary.json", json.dumps(summary, indent=1, default=float).encode())
     return summary
+
+
+def process_day(store, date, min_samples=20):
+    """Process service day `date` (YYYY-MM-DD) and write derived/<date>/; returns the summary."""
+    service_date = date.replace("-", "")
+    static = Static(store, version_for(store, service_date))
+    print(f"static feed {static.version}")
+    pings, coverage = read_pings(store, service_date)
+    print(f"{coverage['snapshots']} snapshots, {len(pings)} usable pings")
+    if pings.empty:
+        raise SystemExit(f"no pings for service day {date}")
+
+    trav, cross, km, stats = process_trips(pings, static, service_date)
+    trav["method_version"] = METHOD_VERSION
+    ff, ff_days = free_flow(store, trav, service_date, min_samples)
+    return write_outputs(store, f"derived/{date}", service_date, static, pings, coverage,
+                         trav, cross, km, stats, ff, ff_days, min_samples)
+
+
+def print_summary(summary):
+    brief = {k: v for k, v in summary.items() if k not in ("vehicles_per_minute", "routes")}
+    print(json.dumps(brief, indent=1))
+    print("top routes by lost hours:", [(r["name"], r["lost_h"]) for r in summary["routes"][:8]])
 
 
 def main():
@@ -333,30 +396,9 @@ def main():
     ap.add_argument("date", help="service date, YYYY-MM-DD")
     ap.add_argument("--min-samples", type=int, default=20, help="minimum traversals for a free-flow baseline")
     args = ap.parse_args()
-    service_date = args.date.replace("-", "")
-
-    static = Static(version_for(service_date))
-    print(f"static feed {static.path.name}")
-    pings, coverage = read_pings(service_date)
-    print(f"{coverage['snapshots']} snapshots, {len(pings)} usable pings")
-    if pings.empty:
-        raise SystemExit("no pings for that service day")
-
-    trav, cross, km, stats = process_trips(pings, static, service_date)
-    trav["method_version"] = METHOD_VERSION
-    ff, ff_days = free_flow(trav, service_date, args.min_samples)
-
-    final = DERIVED_DIR / args.date
-    tmp = DERIVED_DIR / f".{args.date}.tmp"
-    shutil.rmtree(tmp, ignore_errors=True)
-    tmp.mkdir(parents=True)
-    summary = write_outputs(tmp, service_date, static, pings, coverage, trav, cross, km, stats, ff, ff_days, args.min_samples)
-    shutil.rmtree(final, ignore_errors=True)
-    tmp.rename(final)
-
-    brief = {k: v for k, v in summary.items() if k not in ("vehicles_per_minute", "routes")}
-    print(json.dumps(brief, indent=1))
-    print("top routes by lost hours:", [(r["name"], r["lost_h"]) for r in summary["routes"][:8]])
+    store = stores.from_env()
+    print(f"store: {store.description}")
+    print_summary(process_day(store, args.date, args.min_samples))
 
 
 if __name__ == "__main__":
