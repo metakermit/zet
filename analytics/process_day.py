@@ -29,6 +29,7 @@ REANCHOR_AFTER = 3        # consecutive off-route pings before searching the who
 STOPPED_SPEED_MS = 1.0    # slower than this between pings counts as stopped
 DWELL_RADIUS_M = 30.0     # stopped within this distance of a stop is dwell
 MAX_GAP_S = 60.0          # traversals with a longer ping gap are excluded from fine stats
+DEPART_M = 10.0           # a trip departs its first stop when it gets this far past it (beats terminus GPS jitter)
 FREE_FLOW_QUANTILE = 0.15
 FREE_FLOW_WINDOW_DAYS = 28
 
@@ -110,6 +111,26 @@ def crossings(t, d, boundaries):
     return np.where(ok, tc, np.nan), np.where(ok, t1 - t0, np.nan)
 
 
+def pick_crossings(tc):
+    """Which run supplies each stop's crossing (-1: none), given a runs x stops matrix of crossing times.
+
+    A vehicle waiting at the terminus often drifts off the shape and re-anchors,
+    so the first stop can be "departed" several times; the last departure is the
+    real one. Every later stop takes its first crossing after that departure.
+    """
+    pick = np.full(tc.shape[1], -1)
+    first = tc[:, 0]
+    depart = -np.inf
+    if not np.isnan(first).all():
+        pick[0] = int(np.nanargmax(first))
+        depart = first[pick[0]]
+    with np.errstate(invalid="ignore"):
+        later = np.where(tc[:, 1:] >= depart, tc[:, 1:], np.nan)
+    has = ~np.isnan(later).all(axis=0)
+    pick[1:][has] = np.nanargmin(later[:, has], axis=0)
+    return pick
+
+
 def split_time(t, d, stop_d):
     """Cumulative dwell / stopped-elsewhere / running seconds at each ping.
 
@@ -153,24 +174,38 @@ def process_trips(pings, static, service_date):
         t = g["ts"].to_numpy().astype(float)
         d, runs = project_trip(t, g["x"].to_numpy(), g["y"].to_numpy(), dense, sched_t, stop_d, stats)
 
+        # The first stop is usually at the very start of the shape (d = 0), where no ping
+        # can be before it; measure its departure a few metres past it instead.
+        boundaries = stop_d.astype(float)
+        boundaries[0] += DEPART_M
+        tracks = []
         for run in np.unique(runs[runs >= 0]):
             m = runs == run
             tr, dr = t[m], d[m]
             if len(tr) < 2:
                 continue
             km_rows.append((trip["route_id"], vehicle_id, trip_id, dr[-1] - dr[0], tr[-1] - tr[0]))
-            tc, gap = crossings(tr, dr, stop_d)
+            tracks.append((tr, dr, *crossings(tr, dr, boundaries)))
+        if not tracks:
+            continue
+
+        # One crossing per stop per trip instance, even when the trip was cut into several runs.
+        pick = pick_crossings(np.vstack([tc for _, _, tc, _ in tracks]))
+        for i in np.flatnonzero(pick >= 0):
+            _, _, tc, gap = tracks[pick[i]]
+            cross_rows.append((trip_id, vehicle_id, trip["route_id"], trip["direction_id"], int(i),
+                               ps.at[i, "stop_id"], tc[i], sched_t[i], gap[i]))
+
+        # A traversal needs both its crossings from the same run, to split its time.
+        for r in np.unique(pick[pick >= 0]):
+            tr, dr, tc, gap = tracks[r]
             cum = split_time(tr, dr, stop_d)
             cum_at = {k: np.interp(tc, tr, v) for k, v in cum.items()}
             dt = np.diff(tr)
-
-            for i in np.flatnonzero(~np.isnan(tc)):
-                cross_rows.append((trip_id, vehicle_id, trip["route_id"], trip["direction_id"], int(i),
-                                   ps.at[i, "stop_id"], tc[i], sched_t[i], gap[i]))
             for i in range(len(stop_d) - 1):
-                entry, exit_ = tc[i], tc[i + 1]
-                if np.isnan(entry) or np.isnan(exit_):
+                if pick[i] != r or pick[i + 1] != r:
                     continue
+                entry, exit_ = tc[i], tc[i + 1]
                 a = max(0, np.searchsorted(tr, entry, side="right") - 1)
                 b = np.searchsorted(tr, exit_, side="left")
                 max_gap = float(dt[a:b].max()) if b > a else float(gap[i + 1])
