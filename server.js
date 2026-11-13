@@ -115,6 +115,10 @@ app.get('/api/vehicles', async (req, res) => {
 // Analytics outputs written by the nightly Python job under derived/<YYYY-MM-DD>/,
 // in the R2 bucket when ARCHIVE_S3_* is set, else in data/.
 const archive = createArchive();
+// Render sets RENDER=true; its disk is empty and ephemeral, so analytics only work from the bucket.
+const analyticsMisconfigured = process.env.RENDER && !process.env.ARCHIVE_S3_BUCKET;
+console.log(`analytics storage: ${archive.description}`);
+if (analyticsMisconfigured) console.error('ERROR ARCHIVE_S3_* not set on this service: /analytics has no data');
 const ANALYTICS_TTL_MS = parseInt(process.env.ANALYTICS_CACHE_TTL_MS || '600000', 10);
 const ANALYTICS_MAX_ENTRIES = 40;
 const analyticsCache = new Map(); // key -> { at, value }; Map order doubles as LRU order
@@ -133,6 +137,7 @@ async function cached(key, load) {
 }
 
 app.get('/api/analytics/days', async (req, res) => {
+    if (analyticsMisconfigured) return res.status(503).json({ error: 'analytics storage not configured' });
     try {
         const days = await cached('days', async () => {
             // A day is listed once its summary exists; the job writes it last.
@@ -145,7 +150,7 @@ app.get('/api/analytics/days', async (req, res) => {
         });
         res.set('Cache-Control', 'public, max-age=300').json(days);
     } catch (error) {
-        if (isNotFound(error)) return res.json([]);
+        // Listing an existing bucket never 404s, so any error here is configuration or an outage, not "no days".
         console.error('analytics days failed:', error.message);
         res.status(502).json({ error: 'analytics storage unavailable' });
     }

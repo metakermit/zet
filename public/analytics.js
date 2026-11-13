@@ -294,9 +294,17 @@ async function loadDay(day) {
 }
 
 async function init() {
-    const days = await fetch('/api/analytics/days').then((r) => r.json());
+    const response = await fetch('/api/analytics/days');
+    const days = await response.json().catch(() => null);
+    if (!response.ok || !Array.isArray(days)) {
+        const li = document.createElement('li');
+        li.className = 'empty';
+        li.textContent = `Analytics data unavailable (${days?.error || `HTTP ${response.status}`}).`;
+        $('top').replaceChildren(li);
+        return;
+    }
     if (!days.length) {
-        $('top').innerHTML = '<li class="empty">No processed days yet. Run <code>npm run analytics:process</code>.</li>';
+        $('top').innerHTML = '<li class="empty">No processed days yet. The nightly job adds yesterday each morning.</li>';
         return;
     }
     for (const d of days) $('day').add(new Option(d, d));
