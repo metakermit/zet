@@ -95,7 +95,7 @@ One-time setup:
    # in another shell, same env:
    npm run archive:inspect
    ```
-3. In Render: **New → Blueprint**, pick this repo, and fill in the `ARCHIVE_S3_*` values it prompts for, for each service (they're `sync: false`, so never committed). The endpoint is `https://<account>.r2.cloudflarestorage.com`, without the bucket name the R2 dashboard appends (both are accepted, but that's the form to use).
+3. In Render: **New → Blueprint**, pick this repo, and fill in the `ARCHIVE_S3_*` values it prompts for, for each service (they're `sync: false`, so never committed). Render only prompts when a Blueprint is first created: for a service or variable added later, set the values in that service's **Environment** tab. The endpoint is `https://<account>.r2.cloudflarestorage.com`, without the bucket name the R2 dashboard appends (both are accepted, but that's the form to use).
 4. Watch the worker logs for `ingest worker starting` with the S3 archive and `archive reachable`, then a `stats` line every minute with `archived` > 0 and `writeErrors` 0.
 5. After the first night, `zet-nightly`'s log ends with `done in … s` and `/analytics` lists the day. To process a day by hand, use **Trigger Run** on the cron job, or run `python -m analytics.nightly --date YYYY-MM-DD` from its shell.
 

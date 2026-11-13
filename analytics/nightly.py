@@ -8,6 +8,7 @@ pings run until 06:00 the next morning.
 """
 
 import argparse
+import os
 import sys
 import time
 from datetime import datetime, timedelta
@@ -28,6 +29,8 @@ def main():
     started = time.monotonic()
 
     store = stores.from_env()
+    if os.environ.get("RENDER") and isinstance(store, stores.FileStore):
+        raise SystemExit("ARCHIVE_S3_* not set on this service; on Render the job must use the bucket")
     print(f"store: {store.description}; service day {date}", flush=True)
 
     # Loading every night keeps one version per published feed, so each day is
