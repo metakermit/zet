@@ -2,8 +2,8 @@ import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import os from 'os';
-import { readdir } from 'fs/promises';
 import ZagrebGTFSClient from './src/index.js';
+import { createArchive, isNotFound } from './src/archive.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -112,29 +112,57 @@ app.get('/api/vehicles', async (req, res) => {
     }
 });
 
-// Analytics outputs written by the Python jobs (data/derived/<YYYY-MM-DD>/).
-const DERIVED_DIR = join(process.env.ARCHIVE_DIR || join(__dirname, 'data'), 'derived');
+// Analytics outputs written by the nightly Python job under derived/<YYYY-MM-DD>/,
+// in the R2 bucket when ARCHIVE_S3_* is set, else in data/.
+const archive = createArchive();
+const ANALYTICS_TTL_MS = parseInt(process.env.ANALYTICS_CACHE_TTL_MS || '600000', 10);
+const ANALYTICS_MAX_ENTRIES = 40;
+const analyticsCache = new Map(); // key -> { at, value }; Map order doubles as LRU order
+
+async function cached(key, load) {
+    const hit = analyticsCache.get(key);
+    if (hit && Date.now() - hit.at < ANALYTICS_TTL_MS) {
+        analyticsCache.delete(key);
+        analyticsCache.set(key, hit);
+        return hit.value;
+    }
+    const value = await load();
+    analyticsCache.set(key, { at: Date.now(), value });
+    while (analyticsCache.size > ANALYTICS_MAX_ENTRIES) analyticsCache.delete(analyticsCache.keys().next().value);
+    return value;
+}
 
 app.get('/api/analytics/days', async (req, res) => {
     try {
-        const entries = await readdir(DERIVED_DIR, { withFileTypes: true });
-        const days = entries
-            .filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
-            .map((e) => e.name)
-            .sort()
-            .reverse();
-        res.json(days);
+        const days = await cached('days', async () => {
+            // A day is listed once its summary exists; the job writes it last.
+            const keys = await archive.list('derived/');
+            return keys
+                .map((k) => k.match(/^derived\/(\d{4}-\d{2}-\d{2})\/summary\.json$/)?.[1])
+                .filter(Boolean)
+                .sort()
+                .reverse();
+        });
+        res.set('Cache-Control', 'public, max-age=300').json(days);
     } catch (error) {
-        if (error.code === 'ENOENT') return res.json([]);
-        res.status(500).json({ error: error.message });
+        if (isNotFound(error)) return res.json([]);
+        console.error('analytics days failed:', error.message);
+        res.status(502).json({ error: 'analytics storage unavailable' });
     }
 });
 
-app.get('/api/analytics/:day/:file(summary.json|segments.geojson)', (req, res) => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(req.params.day)) return res.status(400).end();
-    res.sendFile(join(DERIVED_DIR, req.params.day, req.params.file), (err) => {
-        if (err && !res.headersSent) res.status(404).json({ error: 'not processed' });
-    });
+app.get('/api/analytics/:day/:file(summary.json|segments.geojson)', async (req, res) => {
+    const { day, file } = req.params;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).end();
+    try {
+        const body = await cached(`${day}/${file}`, () => archive.get(`derived/${day}/${file}`));
+        // res.send sets an ETag and answers conditional requests with 304.
+        res.set('Cache-Control', 'public, max-age=300').type(file.endsWith('.geojson') ? 'application/geo+json' : 'json').send(body);
+    } catch (error) {
+        if (isNotFound(error)) return res.status(404).json({ error: 'not processed' });
+        console.error(`analytics ${day}/${file} failed:`, error.message);
+        res.status(502).json({ error: 'analytics storage unavailable' });
+    }
 });
 
 app.get('/analytics', (req, res) => {

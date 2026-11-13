@@ -2,7 +2,8 @@
 
     python -m analytics.static_gtfs [--zip PATH | --url URL] [--force]
 
-Writes data/gtfs/<feed_version>/ with the source zip and Parquet tables:
+Writes gtfs/<feed_version>/ in the store (local data/ or the R2 bucket, see
+store.py) with the source zip and Parquet tables:
 routes, trips (+ pattern_id), stops, shapes (EPSG:3765 WKB), stop_times,
 pattern_stops (stop distance along shape) and segments (stop-to-stop).
 """
@@ -22,7 +23,7 @@ import pandas as pd
 import shapely
 import shapely.ops
 
-from . import GTFS_DIR
+from . import store as stores
 from .geo import DenseShape, locate_stops_on_shape, to_metric, to_wgs84
 
 DEFAULT_URL = "https://www.zet.hr/gtfs-scheduled/latest"
@@ -38,16 +39,16 @@ def _gtfs_seconds(series):
     return parts[0] * 3600 + parts[1] * 60 + parts[2]
 
 
-def build(zip_bytes, out_root=GTFS_DIR, force=False):
+def build(zip_bytes, store, force=False):
+    """Load a GTFS zip into gtfs/<feed_version>/ unless that version is already there; returns the version."""
     z = zipfile.ZipFile(io.BytesIO(zip_bytes))
     feed_info = _read(z, "feed_info.txt").iloc[0]
     version = feed_info["feed_version"]
-    out = Path(out_root) / version
-    if (out / "feed.json").exists() and not force:
-        print(f"feed {version} already loaded at {out}")
-        return out
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "source.zip").write_bytes(zip_bytes)
+    out = f"gtfs/{version}"
+    if store.exists(f"{out}/feed.json") and not force:
+        print(f"feed {version} already loaded")
+        return version
+    store.put(f"{out}/source.zip", zip_bytes)
 
     routes = _read(z, "routes.txt")[["route_id", "route_short_name", "route_long_name", "route_type"]]
     routes["route_type"] = routes["route_type"].astype(int)
@@ -65,6 +66,9 @@ def build(zip_bytes, out_root=GTFS_DIR, force=False):
     shape_rows = []
     lines = {}
     for shape_id, g in sh.groupby("shape_id", sort=False):
+        if len(g) < 2:  # e.g. 330_4 in feed 000398; its trips get no pattern
+            print(f"  skipping shape {shape_id}: {len(g)} point(s)")
+            continue
         line = shapely.LineString(np.column_stack([g["x"].to_numpy(), g["y"].to_numpy()]))
         lines[shape_id] = line
         shape_rows.append((shape_id, shapely.to_wkb(line), line.length))
@@ -85,9 +89,13 @@ def build(zip_bytes, out_root=GTFS_DIR, force=False):
     print("patterns...")
     stop_lists = stop_times.groupby("trip_id", sort=False)["stop_id"].agg("|".join).rename("stop_list")
     trips = trips.merge(stop_lists, on="trip_id", how="left")
-    keys = trips[["shape_id", "stop_list"]].drop_duplicates().reset_index(drop=True)
+    # Trips without a usable shape (feed 000398 has ~5% on tram lines, probably diversions)
+    # or without stop times can't be projected: they stay in trips with no pattern_id.
+    usable = trips["shape_id"].isin(lines) & trips["stop_list"].notna()
+    print(f"  {int((~usable).sum())} of {len(trips)} trips have no usable shape or stop times")
+    keys = trips.loc[usable, ["shape_id", "stop_list"]].drop_duplicates().reset_index(drop=True)
     keys["pattern_id"] = keys["shape_id"] + "#" + keys.groupby("shape_id").cumcount().astype(str)
-    trips = trips.merge(keys, on=["shape_id", "stop_list"]).drop(columns="stop_list")
+    trips = trips.merge(keys, on=["shape_id", "stop_list"], how="left").drop(columns="stop_list")
 
     stop_xy = stops.set_index("stop_id")[["x", "y"]]
     ps_rows = []
@@ -107,7 +115,7 @@ def build(zip_bytes, out_root=GTFS_DIR, force=False):
     seg = ps.assign(to_stop_id=nxt["stop_id"], to_dist_m=nxt["dist_m"], to_offset_m=nxt["offset_m"]).dropna(subset=["to_stop_id"])
     seg = seg.rename(columns={"stop_id": "from_stop_id", "dist_m": "from_dist_m"})
     seg["segment_id"] = seg["from_stop_id"] + ">" + seg["to_stop_id"]
-    pattern_route = trips.drop_duplicates("pattern_id").set_index("pattern_id")["route_id"]
+    pattern_route = trips.dropna(subset=["pattern_id"]).drop_duplicates("pattern_id").set_index("pattern_id")["route_id"]
     seg["route_id"] = seg["pattern_id"].map(pattern_route)
     # How far the end stops are from the shape; large values mean bad stop coordinates.
     seg["stop_offset_m"] = np.maximum(seg["offset_m"], seg["to_offset_m"].astype(float))
@@ -131,7 +139,7 @@ def build(zip_bytes, out_root=GTFS_DIR, force=False):
     for name, df in [("routes", routes), ("stops", stops), ("shapes", shapes), ("stop_times", stop_times),
                      ("trips", trips), ("pattern_stops", pattern_stops), ("segments", segments),
                      ("calendar_dates", calendar_dates)]:
-        df.to_parquet(out / f"{name}.parquet", index=False)
+        store.put(f"{out}/{name}.parquet", stores.parquet_bytes(df))
 
     meta = {
         "feed_version": version,
@@ -139,27 +147,34 @@ def build(zip_bytes, out_root=GTFS_DIR, force=False):
         "feed_end_date": feed_info["feed_end_date"],
         "sha256": hashlib.sha256(zip_bytes).hexdigest(),
         "loaded_at": datetime.now(timezone.utc).isoformat(),
-        "counts": {"routes": len(routes), "trips": len(trips), "patterns": len(keys), "segments": len(segments)},
+        "counts": {"routes": len(routes), "trips": len(trips),
+                   "trips_without_pattern": int(trips["pattern_id"].isna().sum()), "patterns": len(keys), "segments": len(segments)},
         "max_stop_offset_m": float(pattern_stops["offset_m"].max()),
     }
-    (out / "feed.json").write_text(json.dumps(meta, indent=2))
+    # Written last: a version counts as loaded only once all its tables are in place.
+    store.put(f"{out}/feed.json", json.dumps(meta, indent=2).encode())
     print(json.dumps(meta, indent=2))
-    return out
+    return version
 
 
-def versions(root=GTFS_DIR):
-    out = []
-    for p in Path(root).glob("*/feed.json"):
-        out.append(json.loads(p.read_text()))
+def download(url=DEFAULT_URL):
+    print(f"downloading {url}")
+    with urllib.request.urlopen(url, timeout=120) as r:
+        return r.read()
+
+
+def versions(store):
+    keys = [k for k in store.list("gtfs/") if k.endswith("/feed.json")]
+    out = [json.loads(store.get(k)) for k in keys]
     return sorted(out, key=lambda m: (m["feed_start_date"], m["feed_version"]))
 
 
-def version_for(service_date: str, root=GTFS_DIR):
-    """Newest loaded feed whose validity starts on or before service_date (YYYYMMDD)."""
-    valid = [m for m in versions(root) if m["feed_start_date"] <= service_date <= m["feed_end_date"]]
+def version_for(store, service_date: str):
+    """Newest loaded feed whose validity covers service_date (YYYYMMDD)."""
+    valid = [m for m in versions(store) if m["feed_start_date"] <= service_date <= m["feed_end_date"]]
     if not valid:
         raise SystemExit(f"no static GTFS loaded that covers {service_date}; run python -m analytics.static_gtfs")
-    return Path(root) / valid[-1]["feed_version"]
+    return valid[-1]["feed_version"]
 
 
 def main():
@@ -168,13 +183,10 @@ def main():
     ap.add_argument("--url", default=DEFAULT_URL)
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
-    if args.zip:
-        data = Path(args.zip).read_bytes()
-    else:
-        print(f"downloading {args.url}")
-        with urllib.request.urlopen(args.url) as r:
-            data = r.read()
-    build(data, force=args.force)
+    data = Path(args.zip).read_bytes() if args.zip else download(args.url)
+    store = stores.from_env()
+    print(f"store: {store.description}")
+    build(data, store, force=args.force)
 
 
 if __name__ == "__main__":

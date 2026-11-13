@@ -15,6 +15,17 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Reads the nightly job's outputs (derived/) from the bucket. A read-only token is enough.
+      - key: ARCHIVE_S3_BUCKET
+        sync: false
+      - key: ARCHIVE_S3_ENDPOINT
+        sync: false
+      - key: ARCHIVE_S3_REGION
+        value: auto
+      - key: ARCHIVE_S3_ACCESS_KEY_ID
+        sync: false
+      - key: ARCHIVE_S3_SECRET_ACCESS_KEY
+        sync: false
 
   # Polls the GTFS-RT feed and archives every raw snapshot to R2/B2.
   - type: worker
@@ -29,6 +40,32 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: ARCHIVE_S3_BUCKET
+        sync: false
+      - key: ARCHIVE_S3_ENDPOINT
+        sync: false
+      - key: ARCHIVE_S3_REGION
+        value: auto
+      - key: ARCHIVE_S3_ACCESS_KEY_ID
+        sync: false
+      - key: ARCHIVE_S3_SECRET_ACCESS_KEY
+        sync: false
+
+  # Nightly: loads the current static GTFS (new versions only), then processes
+  # yesterday's service day from raw/ into derived/<date>/ in the bucket.
+  # Schedule is UTC; 05:30 UTC is after 06:00 Zagreb in winter and summer, when
+  # the service day's last pings are in.
+  - type: cron
+    name: zet-nightly
+    runtime: python
+    region: frankfurt
+    plan: standard # 2 GB; a full day needs more than starter's 512 MB
+    schedule: "30 5 * * *"
+    buildCommand: pip install -r analytics/requirements.txt
+    startCommand: python -m analytics.nightly
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.7
       - key: ARCHIVE_S3_BUCKET
         sync: false
       - key: ARCHIVE_S3_ENDPOINT
