@@ -376,7 +376,8 @@ def process_day(store, date, min_samples=20):
     pings, coverage = read_pings(store, service_date)
     print(f"{coverage['snapshots']} snapshots, {len(pings)} usable pings")
     if pings.empty:
-        raise SystemExit(f"no pings for service day {date}")
+        raise SystemExit(f"no pings for service day {date}: {coverage['snapshots']} snapshots in {store.description} "
+                         f"for it; is the archive running, and does it cover that day?")
 
     trav, cross, km, stats = process_trips(pings, static, service_date)
     trav["method_version"] = METHOD_VERSION
